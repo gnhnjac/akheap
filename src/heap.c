@@ -6,8 +6,12 @@
 #include <unistd.h>
 #include <sys/mman.h>
 
-heap create_heap(void *heap_start, size_t heap_size)
+heap create_heap()//void *heap_start, size_t heap_size)
 {
+
+	size_t heap_size = HEAP_SBRK_SIZE;
+
+	void *heap_start = sbrk(heap_size);
 
 	heap _heap;
 
@@ -502,7 +506,21 @@ void *heap_allocate(p_heap heap, size_t data_size)
 	else
 	{
 
-		// extend heap with sbrk (if can't extend it with mmap)
+		// extend heap with sbrk then give from top of heap
+
+		while(heap->top + size >= heap->size)
+		{
+			sbrk(HEAP_SBRK_SIZE);
+			heap->size += HEAP_SBRK_SIZE;
+		}
+
+		p_used_chunk chunk = (p_used_chunk)(heap->start + heap->top - CHUNK_HEADER_SIZE); // prev size is part of previous chunk if not freed
+		chunk->chunk_size = size|(chunk->chunk_size&PREV_IN_USE_BIT); // if prev was in use then keep the bit
+
+		heap->top += size;
+		((p_free_chunk)(heap->start + heap->top - CHUNK_HEADER_SIZE))->chunk_size = (heap->size-heap->top)|PREV_IN_USE_BIT;
+
+		return (void *)&chunk->data;
 
 	}
 
@@ -609,6 +627,7 @@ void heap_free(p_heap heap, void *chunk)
 		size_t chunk_size = CHUNK_SIZE(chunk);
 		munmap(chunk-CHUNK_HEADER_SIZE,chunk_size);
 		return;
+
 	}
 
 	assert(chunk != heap->start + heap->top + CHUNK_HEADER_SIZE); // make sure chunk isn't the heap top

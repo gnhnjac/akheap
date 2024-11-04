@@ -56,8 +56,11 @@ typedef struct {
 #define CHUNK_ALIGN 0x10//8
 #define CHUNK_FLAG_MASK (CHUNK_ALIGN-1)
 #define MIN_SIZE (CHUNK_ALIGN*2)
+
 #define LARGE_BIN_MINIMUM (MIN_SIZE + SMALL_BIN_AMT*CHUNK_ALIGN)
 #define LARGE_BIN_MINIMUM_SPACING 64
+
+#define HEAP_SBRK_SIZE 0x100000 // 1 MB
 
 #define CHUNK_HEADER(chunk) ((chunk-CHUNK_HEADER_SIZE))
 #define IS_PREV_IN_USE(chunk) ((*(size_t *)CHUNK_HEADER(chunk)) & (PREV_IN_USE_BIT))
@@ -66,7 +69,7 @@ typedef struct {
 #define CHUNK_SIZE(chunk) (((*((size_t *)CHUNK_HEADER(chunk)))&(~CHUNK_FLAG_MASK)))
 #define IS_IN_USE(chunk) (IS_PREV_IN_USE(CHUNK_HEADER(chunk)+CHUNK_SIZE(chunk)+CHUNK_HEADER_SIZE))
 
-heap create_heap(void *heap_start, size_t heap_size);
+heap create_heap();//void *heap_start, size_t heap_size);
 void *heap_allocate(p_heap heap, size_t data_size);
 void heap_free(p_heap heap, void *chunk);
 void free_chunk_from_next_metadata(p_used_chunk chunk);

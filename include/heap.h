@@ -31,7 +31,9 @@ typedef struct {
 #define FAST_BIN_CONSOLIDATION_THRESHOLD 0x10000 // 64kb threshold
 
 #define SMALL_BIN_AMT 62
-#define LARGE_BIN_AMT 63
+#define LARGE_BIN_AMT 63 // needs to be odd
+
+#define MMAP_THRESHOLD 0x20000 // 128 kb
 
 typedef struct {
 
@@ -48,19 +50,20 @@ typedef struct {
 
 #define PREV_IN_USE_BIT 1
 #define MMAPPED_BIT 2
-#define SECONDARY_ARENA_BIT 4
-#define CHUNK_CONSOLIDATED_BIT 8
+#define CHUNK_CONSOLIDATED_BIT 4
 #define CHUNK_HEADER_SIZE sizeof(size_t)
-#define CHUNK_METADATA_SIZE CHUNK_HEADER_SIZE*2
-#define CHUNK_ALIGN 0x10
-#define MIN_SIZE 0x10//CHUNK_ALIGN*2
+#define CHUNK_METADATA_SIZE (CHUNK_HEADER_SIZE*2)
+#define CHUNK_ALIGN 0x10//8
+#define CHUNK_FLAG_MASK (CHUNK_ALIGN-1)
+#define MIN_SIZE (CHUNK_ALIGN*2)
+#define LARGE_BIN_MINIMUM (MIN_SIZE + SMALL_BIN_AMT*CHUNK_ALIGN)
+#define LARGE_BIN_MINIMUM_SPACING 64
 
 #define CHUNK_HEADER(chunk) ((chunk-CHUNK_HEADER_SIZE))
 #define IS_PREV_IN_USE(chunk) ((*(size_t *)CHUNK_HEADER(chunk)) & (PREV_IN_USE_BIT))
 #define IS_MMAPPED(chunk) ((*(size_t *)CHUNK_HEADER(chunk)) & (MMAPPED_BIT))
-#define IS_FROM_SECONDARY_ARENA(chunk) ((*(size_t *)CHUNK_HEADER(chunk)) & (SECONDARY_ARENA_BIT))
 #define IS_CONSOLIDATED(chunk) ((*(size_t *)CHUNK_HEADER(chunk)) & (CHUNK_CONSOLIDATED_BIT))
-#define CHUNK_SIZE(chunk) (((*((size_t *)CHUNK_HEADER(chunk)))&(~15)))
+#define CHUNK_SIZE(chunk) (((*((size_t *)CHUNK_HEADER(chunk)))&(~CHUNK_FLAG_MASK)))
 #define IS_IN_USE(chunk) (IS_PREV_IN_USE(CHUNK_HEADER(chunk)+CHUNK_SIZE(chunk)+CHUNK_HEADER_SIZE))
 
 heap create_heap(void *heap_start, size_t heap_size);

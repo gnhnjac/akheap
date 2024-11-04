@@ -10,36 +10,40 @@ int main() {
 
    srand(time(NULL));
 
-   heap h = create_heap((void *)&heap_buffer,0x1000000);
-
-   void *chunk_array[100];
-
-   for (int j = 0; j < 400; j++)
+   while(1)
    {
+      heap h = create_heap((void *)&heap_buffer,0x1000000);
 
-      printf("at j %d\n",j);
+      printf("%d",CHUNK_FLAG_MASK);
 
-      for (int i = 0; i < 100; i++)
+      void *chunk_array[100];
+
+      for (int j = 0; j < 100; j++)
       {
-         size_t alloc_size = rand() % 1024;
 
-         chunk_array[i] = heap_allocate(&h,alloc_size);
+         printf("at j %d\n",j);
+
+         for (int i = 0; i < 100; i++)
+         {
+            size_t alloc_size = rand() % 1024;
+
+            chunk_array[i] = heap_allocate(&h,alloc_size);
+
+         }
+
+         for (int i = 0; i < 100; i++)
+         {
+            size_t should_free = rand() % 10;
+
+            if (should_free > 2)
+               heap_free(&h,chunk_array[i]);
+
+         }
 
       }
 
-      for (int i = 0; i < 100; i++)
-      {
-
-         size_t should_free = rand() % 10;
-
-         if (should_free > 5)
-            heap_free(&h,chunk_array[i]);
-
-      }
-
+      //print_bin(&h.unsorted_bin);
    }
-
-   print_bin(&h.unsorted_bin);
 
    return 0;
 }

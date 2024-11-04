@@ -2,6 +2,9 @@
 #include <string.h>
 #include <stdio.h>
 #include <assert.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/mman.h>
 
 heap create_heap(void *heap_start, size_t heap_size)
 {
@@ -24,7 +27,7 @@ heap create_heap(void *heap_start, size_t heap_size)
 }
 
 // return chunk from bin (chunk is at metadata)
-void *take_from_bin(p_free_chunk *bin)
+p_used_chunk take_from_bin(p_free_chunk *bin)
 {
 
 	if (!bin || !*bin)
@@ -32,7 +35,7 @@ void *take_from_bin(p_free_chunk *bin)
 
 	p_free_chunk chunk = *bin;
 
-	size_t chunk_size = chunk->chunk_size&(~15);
+	size_t chunk_size = chunk->chunk_size&(~CHUNK_FLAG_MASK);
 
 	p_chunk_metadata next_chunk_metadata = (p_chunk_metadata)(((void *)chunk) + chunk_size);
 
@@ -42,11 +45,127 @@ void *take_from_bin(p_free_chunk *bin)
 
 	chunk->bin_ptr = 0;
 
-	return (void *)chunk;
+	return (p_used_chunk)chunk;
 
 }
 
-void *take_from_unsorted_and_promote(p_free_chunk *unsorted, p_free_chunk *large, p_free_chunk *small, size_t size)
+void insert_to_large_bin(p_free_chunk *large, p_free_chunk chunk)
+{
+
+	size_t chunk_size = chunk->chunk_size&(~CHUNK_FLAG_MASK);
+
+	size_t current_minimum = LARGE_BIN_MINIMUM;
+	size_t current_bins = LARGE_BIN_AMT + LARGE_BIN_AMT%2;
+	size_t total_bins = 0;
+	size_t current_spacing = LARGE_BIN_MINIMUM_SPACING;
+
+	while (current_bins > 0)
+	{
+		current_bins /= 2;
+
+		if (current_bins == 1 || chunk_size < current_minimum + current_bins * current_spacing)
+		{
+
+			size_t large_index;
+
+			if (current_bins == 1)
+				large_index = LARGE_BIN_AMT-1;
+			else
+				large_index = total_bins + ((chunk_size - current_minimum)/current_spacing);
+
+			chunk->fwd_ptr = large[large_index];
+			chunk->bin_ptr = &large[large_index];
+			large[large_index] = chunk;
+			break;
+
+		}
+
+		total_bins += current_bins;
+		current_minimum += current_bins * current_spacing;
+		current_spacing *= 8;
+	}
+
+}
+
+p_used_chunk take_from_large_bin(p_free_chunk *large, size_t chunk_size)
+{
+
+	if (chunk_size < LARGE_BIN_MINIMUM)
+		return 0;
+
+	size_t current_minimum = LARGE_BIN_MINIMUM;
+	size_t current_bins = LARGE_BIN_AMT + LARGE_BIN_AMT%2;
+	size_t total_bins = 0;
+	size_t current_spacing = LARGE_BIN_MINIMUM_SPACING;
+
+	while (current_bins > 0)
+	{
+		current_bins /= 2;
+
+		if (current_bins == 1 || chunk_size < current_minimum + current_bins * current_spacing)
+		{
+
+			size_t large_index;
+
+			if (current_bins == 1)
+				large_index = LARGE_BIN_AMT-1;
+			else
+				large_index = total_bins + ((chunk_size - current_minimum)/current_spacing);
+
+			p_free_chunk tmp = large[large_index];
+			p_free_chunk prev = 0;
+
+			if (tmp)
+			{
+
+				while(tmp)
+				{
+
+					size_t tmp_size = tmp->chunk_size&(~CHUNK_FLAG_MASK);
+
+					if (tmp_size == chunk_size)
+					{
+
+						p_free_chunk chunk = tmp;
+
+						p_chunk_metadata next_chunk_metadata = (p_chunk_metadata)(((void *)chunk) + chunk_size);
+
+						next_chunk_metadata->chunk_size |= PREV_IN_USE_BIT; // it is now in use
+
+						if (tmp == large[large_index])
+							large[large_index] = chunk->fwd_ptr;
+						else
+						{
+							prev->fwd_ptr = chunk->fwd_ptr;
+						}
+
+						chunk->bin_ptr = 0;
+
+						return (p_used_chunk)chunk;
+
+					}
+
+					prev = tmp;
+					tmp = tmp->fwd_ptr;
+
+				}
+
+			}
+
+			return 0; // the corresponding bin is empty / didn't find correct size in bin
+
+		}
+
+		total_bins += current_bins;
+		current_minimum += current_bins * current_spacing;
+		current_spacing *= 8;
+	}
+
+	return 0; // didn't find corresponding bin? can't get here
+
+}
+
+p_used_chunk take_from_unsorted_and_promote(p_free_chunk *unsorted, p_free_chunk *large, p_free_chunk *small, size_t size)
 {
 
 	if (!unsorted | !large | !small)
@@ -60,7 +179,7 @@ void *take_from_unsorted_and_promote(p_free_chunk *unsorted, p_free_chunk *large
 
 		p_free_chunk chunk = tmp;
 
-		size_t chunk_size = chunk->chunk_size&(~15);
+		size_t chunk_size = chunk->chunk_size&(~CHUNK_FLAG_MASK);
 
 		if (chunk_size == size)
 		{
@@ -69,21 +188,17 @@ void *take_from_unsorted_and_promote(p_free_chunk *unsorted, p_free_chunk *large
 
 			next_chunk_metadata->chunk_size |= PREV_IN_USE_BIT; // it is now in use
 
-			if (tmp == *unsorted)
-				*unsorted = (*unsorted)->fwd_ptr;
-			else
-				prev->fwd_ptr = tmp->fwd_ptr;
+			*unsorted = (*unsorted)->fwd_ptr;
 
 			chunk->bin_ptr = 0;
 
-			return (void *)chunk;
+			return (p_used_chunk)chunk;
 		}
 		else
 		{
 
 			// promote entry to small / large bin
 
-			prev = tmp;
 			tmp = tmp->fwd_ptr;
 			*unsorted = tmp;
 
@@ -102,10 +217,7 @@ void *take_from_unsorted_and_promote(p_free_chunk *unsorted, p_free_chunk *large
 			else // put in large
 			{
 
-				// temporary
-				*unsorted = chunk;
-				chunk->fwd_ptr = tmp;
-
+				insert_to_large_bin(large,chunk);
 
 			}
 
@@ -128,9 +240,9 @@ p_free_chunk merge_backwards(p_heap heap, p_free_chunk chunk)
 
 		p_free_chunk prev_chunk = ((void *)chunk) - chunk->prev_size;
 
-		assert((prev_chunk->chunk_size&(~15))==chunk->prev_size);
+		assert((prev_chunk->chunk_size&(~CHUNK_FLAG_MASK))==chunk->prev_size);
 
-		prev_chunk->chunk_size += chunk->chunk_size&(~15);
+		prev_chunk->chunk_size += chunk->chunk_size&(~CHUNK_FLAG_MASK);
 
 		remove_chunk_from_bin(chunk->bin_ptr,chunk); // since it's no longer a chunk after we merge it (it belongs to some bin currently)
 
@@ -140,7 +252,7 @@ p_free_chunk merge_backwards(p_heap heap, p_free_chunk chunk)
 
 	}
 
-	if (((void *)chunk) + (chunk->chunk_size&(~15)) + CHUNK_HEADER_SIZE >= heap->start + heap->top)
+	if (((void *)chunk) + (chunk->chunk_size&(~CHUNK_FLAG_MASK)) + CHUNK_HEADER_SIZE >= heap->start + heap->top)
 	{
 
 		heap->top = (size_t)(((void *)chunk) + CHUNK_HEADER_SIZE - heap->start);
@@ -163,7 +275,7 @@ p_free_chunk merge_forwards(p_heap heap, p_free_chunk chunk)
 	while (true)
 	{
 
-		size_t chunk_size = chunk->chunk_size&(~15);
+		size_t chunk_size = chunk->chunk_size&(~CHUNK_FLAG_MASK);
 
 		p_free_chunk next_chunk = ((void *)chunk) + chunk_size;
 
@@ -180,7 +292,7 @@ p_free_chunk merge_forwards(p_heap heap, p_free_chunk chunk)
 		if (!IS_IN_USE(((void *)next_chunk)+CHUNK_METADATA_SIZE))
 		{
 
-			chunk->chunk_size += next_chunk->chunk_size&(~15);
+			chunk->chunk_size += next_chunk->chunk_size&(~CHUNK_FLAG_MASK);
 
 			remove_chunk_from_bin(next_chunk->bin_ptr,next_chunk);
 
@@ -348,9 +460,34 @@ void *heap_allocate(p_heap heap, size_t data_size)
 
 	}
 
+	// check large bin for matches
+
+	chunk = take_from_large_bin(&heap->large_bins[0], size);
+
+	if (chunk)
+	{
+
+		chunk->chunk_size = size|(chunk->chunk_size&PREV_IN_USE_BIT); // just for safety to prevent heap overflow
+
+		return (void *)&chunk->data;
+
+	}
+
 	// allocate from top of heap
 
-	if (heap->top + size < heap->size)
+	if (size >= MMAP_THRESHOLD) // allocate with mmap
+	{
+
+		int fd = open("/dev/zero", O_RDWR);
+		p_used_chunk chunk = (p_used_chunk)(mmap(NULL,size,PROT_READ|PROT_WRITE,MAP_PRIVATE, fd, 0)-CHUNK_HEADER_SIZE);
+		close(fd);
+
+		chunk->chunk_size = size|MMAPPED_BIT;
+
+		return (void *)&chunk->data;
+
+	}
+	else if (heap->top + size < heap->size)
 	{
 
 		p_used_chunk chunk = (p_used_chunk)(heap->start + heap->top - CHUNK_HEADER_SIZE); // prev size is part of previous chunk if not freed
@@ -365,9 +502,7 @@ void *heap_allocate(p_heap heap, size_t data_size)
 	else
 	{
 
-		// extend heap with sbrk
-
-		// if can't then extend it with mmap
+		// extend heap with sbrk (if can't extend it with mmap)
 
 	}
 
@@ -378,7 +513,7 @@ void *heap_allocate(p_heap heap, size_t data_size)
 void free_chunk_from_next_metadata(p_used_chunk chunk)
 {
 
-	size_t chunk_size = chunk->chunk_size&(~15);
+	size_t chunk_size = chunk->chunk_size&(~CHUNK_FLAG_MASK);
 
 	p_chunk_metadata next_chunk_metadata = (p_chunk_metadata)(((void *)chunk) + chunk_size);
 
@@ -471,6 +606,9 @@ void heap_free(p_heap heap, void *chunk)
 
 		// munmap it
 
+		size_t chunk_size = CHUNK_SIZE(chunk);
+		munmap(chunk-CHUNK_HEADER_SIZE,chunk_size);
+		return;
 	}
 
 	assert(chunk != heap->start + heap->top + CHUNK_HEADER_SIZE); // make sure chunk isn't the heap top
@@ -480,6 +618,8 @@ void heap_free(p_heap heap, void *chunk)
 	// put in fast bin
 
 	size_t chunk_size = CHUNK_SIZE(chunk);
+
+	((p_free_chunk)(chunk-CHUNK_METADATA_SIZE))->bin_ptr = 0; // make sure it doesn't point to any bin (as it isn't in one as of now), otherwise it can lead to faulty addresses
 
 	if (chunk_size < MIN_SIZE + CHUNK_ALIGN * FAST_BIN_AMT) // put it in corresponding fast bin
 	{
@@ -511,8 +651,6 @@ void heap_free(p_heap heap, void *chunk)
 
 	}
 
-	((p_free_chunk)(chunk-CHUNK_METADATA_SIZE))->bin_ptr = 0;
-
 	p_free_chunk merged_chunk = merge_backwards(heap, chunk-CHUNK_METADATA_SIZE);
 
 	if (merged_chunk)
@@ -535,7 +673,7 @@ void print_chunk(void *chunk, bool print_data)
 
 	size_t chunk_size = CHUNK_SIZE(chunk);
 
-	printf("chunk at 0x%p: SIZE=%u,P=%d,M=%d,A=%d,C=%d\n", chunk, chunk_size, IS_PREV_IN_USE(chunk) ? 1 : 0, IS_MMAPPED(chunk) ? 1 : 0, IS_FROM_SECONDARY_ARENA(chunk) ? 1 : 0, IS_CONSOLIDATED(chunk) ? 1 : 0);
+	printf("chunk at 0x%p: SIZE=%u,P=%d,M=%d,C=%d\n", chunk, chunk_size, IS_PREV_IN_USE(chunk) ? 1 : 0, IS_MMAPPED(chunk) ? 1 : 0, IS_CONSOLIDATED(chunk) ? 1 : 0);
 
 	if (!print_data)
 		return;

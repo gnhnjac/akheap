@@ -1,4 +1,6 @@
-cmake_minimum_required(VERSION 3.31)
+cmake_minimum_required(VERSION 3.30)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 include_directories(include)
 link_directories()

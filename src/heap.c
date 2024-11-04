@@ -625,7 +625,11 @@ void heap_free(p_heap heap, void *chunk)
 {
 
 	if (!IS_MMAPPED(chunk))
+	{
 		assert(IS_IN_USE(chunk)); // make sure chunk is in use before freeing (if not mmapped)
+		assert(((size_t)(chunk-CHUNK_HEADER_SIZE))%CHUNK_ALIGN == 0); // make sure chunk size is aligned correctly
+		assert(chunk >= heap->start && chunk < heap->start + heap->top); // make sure chunk is within heap boundaries
+	}
 	else
 	{
 

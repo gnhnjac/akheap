@@ -8,7 +8,7 @@ typedef struct _free_chunk {
 	size_t prev_size; // only if prev is free
 	size_t chunk_size;
 	struct _free_chunk *fwd_ptr; 
-	struct _free_chunk **bin_ptr;
+	struct _free_chunk **bin_ptr; // points to the previous chunk (or to the bin, in order to remove the chunk when transferring it to another bin, or when it gets consolidated)
 
 } __attribute__((packed)) free_chunk, *p_free_chunk;
 

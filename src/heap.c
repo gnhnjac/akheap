@@ -47,6 +47,9 @@ p_used_chunk take_from_bin(p_free_chunk *bin)
 
 	*bin = (*bin)->fwd_ptr;
 
+	if (*bin)
+		(*bin)->bin_ptr = chunk->bin_ptr;
+
 	chunk->bin_ptr = 0;
 
 	return (p_used_chunk)chunk;
@@ -78,7 +81,9 @@ void insert_to_large_bin(p_free_chunk *large, p_free_chunk chunk)
 				large_index = total_bins + ((chunk_size - current_minimum)/current_spacing);
 
 			chunk->fwd_ptr = large[large_index];
-			chunk->bin_ptr = &large[large_index];
+			chunk->bin_ptr = ((void *)&large[large_index]) - CHUNK_METADATA_SIZE;
+			if (large[large_index])
+				large[large_index]->bin_ptr = (p_free_chunk *)chunk;
 			large[large_index] = chunk;
 			break;
 
@@ -137,10 +142,16 @@ p_used_chunk take_from_large_bin(p_free_chunk *large, size_t chunk_size)
 						next_chunk_metadata->chunk_size |= PREV_IN_USE_BIT; // it is now in use
 
 						if (tmp == large[large_index])
+						{
 							large[large_index] = chunk->fwd_ptr;
+							if (large[large_index])
+								large[large_index]->bin_ptr = chunk->bin_ptr;
+						}
 						else
 						{
 							prev->fwd_ptr = chunk->fwd_ptr;
+							if (chunk->fwd_ptr)
+								chunk->fwd_ptr->bin_ptr = (p_free_chunk *)prev;
 						}
 
 						chunk->bin_ptr = 0;
@@ -194,6 +205,9 @@ p_used_chunk take_from_unsorted_and_promote(p_free_chunk *unsorted, p_free_chunk
 
 			*unsorted = (*unsorted)->fwd_ptr;
 
+			if (*unsorted)
+				(*unsorted)->bin_ptr = chunk->bin_ptr;
+
 			chunk->bin_ptr = 0;
 
 			return (p_used_chunk)chunk;
@@ -214,7 +228,9 @@ p_used_chunk take_from_unsorted_and_promote(p_free_chunk *unsorted, p_free_chunk
 				size_t small_idx = (int)((chunk_size-MIN_SIZE)/CHUNK_ALIGN);
 
 				chunk->fwd_ptr = small[small_idx];
-				chunk->bin_ptr = &small[small_idx];
+				chunk->bin_ptr = ((void *)&small[small_idx]) - CHUNK_METADATA_SIZE;
+				if (small[small_idx])
+					small[small_idx]->bin_ptr = (p_free_chunk *)chunk;
 				small[small_idx] = chunk;
 
 			}
@@ -360,7 +376,7 @@ void consolidate_bin(p_heap heap, p_free_chunk *bin, p_free_chunk *tgt_bin)
 			if (merged_chunk) // no need to add it if it's merged with heap top
 			{
 				insert_to_bin(tgt_bin,(p_used_chunk)merged_chunk,true);
-				merged_chunk->chunk_size |= CHUNK_CONSOLIDATED_BIT; // if the backwards merged chunk appears somewhere on this bin in the future
+				merged_chunk->chunk_size |= CHUNK_CONSOLIDATED_BIT; // if the backwards merged chunk appears in the future
 			}
 			// no need for that since there's no case where 
 			// else if (merged_chunk && (merged_chunk->chunk_size&CHUNK_CONSOLIDATED_BIT))
@@ -550,40 +566,46 @@ void free_chunk_from_next_metadata(p_used_chunk chunk)
 void remove_chunk_from_bin(p_free_chunk *bin, p_free_chunk chunk)
 {
 
-	if (!bin || !*bin)
+	if (!bin)// || !*bin)
 	{
 		return;
 	}
 
 	chunk->bin_ptr = 0;
 
-	p_free_chunk tmp = *bin;
+	p_free_chunk tmp = (p_free_chunk)bin;
 
-	if (chunk == tmp)
-	{
-		(*bin) = (*bin)->fwd_ptr;
-	}
-	else
-	{
+	tmp->fwd_ptr = chunk->fwd_ptr;
 
-		while(tmp->fwd_ptr)
-		{
+	if (chunk->fwd_ptr)
+		chunk->fwd_ptr->bin_ptr = (p_free_chunk *)tmp;
 
-			p_free_chunk next_chunk = tmp->fwd_ptr;
+	// no need to iterate over whole bin (previously bin_ptr was just a pointer to the bin), we can just point it to the prev entry. redundant overhead...
+	// if (chunk == tmp)
+	// {
+	// 	(*bin) = (*bin)->fwd_ptr;
+	// }
+	// else
+	// {
 
-			if (next_chunk == chunk)
-			{
+	// 	while(tmp->fwd_ptr)
+	// 	{
 
-				tmp->fwd_ptr = chunk->fwd_ptr;
-				return;
+	// 		p_free_chunk next_chunk = tmp->fwd_ptr;
 
-			}
+	// 		if (next_chunk == chunk)
+	// 		{
 
-			tmp = tmp->fwd_ptr;
+	// 			tmp->fwd_ptr = chunk->fwd_ptr;
+	// 			return;
 
-		}
+	// 		}
 
-	}
+	// 		tmp = tmp->fwd_ptr;
+
+	// 	}
+
+	// }
 
 }
 
@@ -599,12 +621,13 @@ void insert_to_bin(p_free_chunk *bin, p_used_chunk chunk, bool unset_used_bit)
 	if (freed_chunk->bin_ptr)
 		remove_chunk_from_bin(freed_chunk->bin_ptr,freed_chunk);
 
-	freed_chunk->bin_ptr = bin;
+	freed_chunk->bin_ptr = ((void *)bin)-CHUNK_METADATA_SIZE;
 
 	if (*bin)
 	{
 
 		freed_chunk->fwd_ptr = *bin;
+		(*bin)->bin_ptr = (p_free_chunk *)freed_chunk;
 
 	}
 	else

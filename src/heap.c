@@ -69,12 +69,10 @@ void *take_from_unsorted_and_promote(p_free_chunk *unsorted, p_free_chunk *large
 
 			next_chunk_metadata->chunk_size |= PREV_IN_USE_BIT; // it is now in use
 
-			if (prev)
-				prev->fwd_ptr = tmp->fwd_ptr;
+			if (tmp == *unsorted)
+				*unsorted = (*unsorted)->fwd_ptr;
 			else
-				(*unsorted) = (*unsorted)->fwd_ptr;
-
-			//*unsorted = (*unsorted)->fwd_ptr;
+				prev->fwd_ptr = tmp->fwd_ptr;
 
 			chunk->bin_ptr = 0;
 
@@ -83,32 +81,35 @@ void *take_from_unsorted_and_promote(p_free_chunk *unsorted, p_free_chunk *large
 		else
 		{
 
-			// // promote entry to small / large bin
+			// promote entry to small / large bin
 
-			// tmp = tmp->fwd_ptr;
-			// *unsorted = tmp;
+			prev = tmp;
+			tmp = tmp->fwd_ptr;
+			*unsorted = tmp;
 
-			// // try small
+			// try small
 
-			// if (chunk_size < MIN_SIZE + CHUNK_ALIGN * SMALL_BIN_AMT)
-			// {
+			if (chunk_size < MIN_SIZE + CHUNK_ALIGN * SMALL_BIN_AMT)
+			{
 
-			// 	//chunk->bin_ptr = 0;
+				size_t small_idx = (int)((chunk_size-MIN_SIZE)/CHUNK_ALIGN);
 
-			// 	insert_to_bin(&small[(int)((size-MIN_SIZE)/CHUNK_ALIGN)], (p_used_chunk)chunk, false);
+				chunk->fwd_ptr = small[small_idx];
+				chunk->bin_ptr = &small[small_idx];
+				small[small_idx] = chunk;
 
-			// }
-			// else // put in large
-			// {
+			}
+			else // put in large
+			{
+
+				// temporary
+				*unsorted = chunk;
+				chunk->fwd_ptr = tmp;
 
 
-			// }
+			}
 
 		}
-
-		prev = tmp;
-
-		tmp = tmp->fwd_ptr;
 
 	}
 
@@ -118,24 +119,30 @@ void *take_from_unsorted_and_promote(p_free_chunk *unsorted, p_free_chunk *large
 p_free_chunk merge_backwards(p_heap heap, p_free_chunk chunk)
 {
 
+	if (!chunk)
+		return 0;
+
 	while(!(chunk->chunk_size&PREV_IN_USE_BIT))
 	{
 
-		chunk->chunk_size |= CHUNK_CONSOLIDATED_BIT; // pointless as we are removing it from it's bin
 
 		p_free_chunk prev_chunk = ((void *)chunk) - chunk->prev_size;
 
+		assert((prev_chunk->chunk_size&(~15))==chunk->prev_size);
+
 		prev_chunk->chunk_size += chunk->chunk_size&(~15);
 
-		remove_chunk_from_bin(chunk->bin_ptr,chunk);
+		remove_chunk_from_bin(chunk->bin_ptr,chunk); // since it's no longer a chunk after we merge it (it belongs to some bin currently)
+
+		chunk->chunk_size |= CHUNK_CONSOLIDATED_BIT;
 
 		chunk = prev_chunk;
 
 	}
 
-	if (((void *)chunk) + (chunk->chunk_size&(~15)) >= heap->start + heap->top)
+	if (((void *)chunk) + (chunk->chunk_size&(~15)) + CHUNK_HEADER_SIZE >= heap->start + heap->top)
 	{
-		printf("Reached here");
+
 		heap->top = (size_t)(((void *)chunk) + CHUNK_HEADER_SIZE - heap->start);
 		((p_free_chunk)(heap->start + heap->top - CHUNK_HEADER_SIZE))->chunk_size = (heap->size-heap->top)|(chunk->chunk_size&PREV_IN_USE_BIT);
 		remove_chunk_from_bin(chunk->bin_ptr,chunk);
@@ -144,6 +151,46 @@ p_free_chunk merge_backwards(p_heap heap, p_free_chunk chunk)
 
 
 	return chunk;
+
+}
+
+p_free_chunk merge_forwards(p_heap heap, p_free_chunk chunk)
+{
+
+	if (!chunk)
+		return 0;
+
+	while (true)
+	{
+
+		size_t chunk_size = chunk->chunk_size&(~15);
+
+		p_free_chunk next_chunk = ((void *)chunk) + chunk_size;
+
+		if (((void *)next_chunk) + CHUNK_HEADER_SIZE >= heap->start + heap->top)
+		{
+
+			heap->top = (size_t)(((void *)chunk) + CHUNK_HEADER_SIZE - heap->start);
+			((p_free_chunk)(heap->start + heap->top - CHUNK_HEADER_SIZE))->chunk_size = (heap->size-heap->top)|(chunk->chunk_size&PREV_IN_USE_BIT);
+			remove_chunk_from_bin(chunk->bin_ptr,chunk);
+			return 0;
+
+		}
+
+		if (!IS_IN_USE(((void *)next_chunk)+CHUNK_METADATA_SIZE))
+		{
+
+			chunk->chunk_size += next_chunk->chunk_size&(~15);
+
+			remove_chunk_from_bin(next_chunk->bin_ptr,next_chunk);
+
+		}
+		else
+			return chunk;
+
+	}
+
+	return 0; // not supposed to reach here
 
 }
 
@@ -172,20 +219,32 @@ void consolidate_bin(p_heap heap, p_free_chunk *bin, p_free_chunk *tgt_bin)
 
 	while(tmp)
 	{
+
+		tmp->bin_ptr = 0; // make it so you can't remove entries from this bin
+		tmp = tmp->fwd_ptr;
+
+	}
+
+	tmp = *bin;
+
+	while(tmp)
+	{
 		p_free_chunk next_tmp = tmp->fwd_ptr;
 
 		if (!(tmp->chunk_size&CHUNK_CONSOLIDATED_BIT))
 		{
+
 			p_free_chunk merged_chunk = merge_backwards(heap, tmp);
 
-			if (merged_chunk && !(merged_chunk->chunk_size&CHUNK_CONSOLIDATED_BIT))
+			if (merged_chunk && !(merged_chunk->chunk_size&CHUNK_CONSOLIDATED_BIT)) // no need to add it if it's merged with heap top or already consolidated
 			{
-				insert_to_bin(tgt_bin,(p_used_chunk)merged_chunk,false);
+				insert_to_bin(tgt_bin,(p_used_chunk)merged_chunk,true);
 			}
+			else if (merged_chunk && (merged_chunk->chunk_size&CHUNK_CONSOLIDATED_BIT))
+				free_chunk_from_next_metadata((p_used_chunk)merged_chunk); // size has changed, update it
 
 			if (merged_chunk)
 				merged_chunk->chunk_size |= CHUNK_CONSOLIDATED_BIT;
-
 		}
 
 		tmp = next_tmp;
@@ -332,7 +391,11 @@ void remove_chunk_from_bin(p_free_chunk *bin, p_free_chunk chunk)
 {
 
 	if (!bin || !*bin)
+	{
 		return;
+	}
+
+	chunk->bin_ptr = 0;
 
 	p_free_chunk tmp = *bin;
 
@@ -402,15 +465,7 @@ void heap_free(p_heap heap, void *chunk)
 {
 
 	if (!IS_MMAPPED(chunk))
-	{
-
-		if (!IS_IN_USE(chunk))
-		{
-			printf("%p,%p,%x\n",heap,chunk,((p_free_chunk)(chunk-CHUNK_METADATA_SIZE))->chunk_size);
-			//print_bin(&heap->unsorted_bin);
-		}
 		assert(IS_IN_USE(chunk)); // make sure chunk is in use before freeing (if not mmapped)
-	}
 	else
 	{
 
@@ -436,7 +491,6 @@ void heap_free(p_heap heap, void *chunk)
 
 	else if(chunk_size > FAST_BIN_CONSOLIDATION_THRESHOLD)
 	{
-
 		// consolidate and merge fast bins to unsorted bin
 
 		for (int i = 0; i < FAST_BIN_AMT; i++)
@@ -457,11 +511,22 @@ void heap_free(p_heap heap, void *chunk)
 
 	}
 
+	((p_free_chunk)(chunk-CHUNK_METADATA_SIZE))->bin_ptr = 0;
+
 	p_free_chunk merged_chunk = merge_backwards(heap, chunk-CHUNK_METADATA_SIZE);
-	// ** add merge forwards
 
 	if (merged_chunk)
-		insert_to_bin(&heap->unsorted_bin,(p_used_chunk)merged_chunk,true); // insert chunk to unsorted bin
+	{
+
+		//free_chunk_from_next_metadata((p_used_chunk)merged_chunk);
+
+		merged_chunk = merge_forwards(heap,merged_chunk);
+		// ** add merge forwards
+
+		if (merged_chunk)
+			insert_to_bin(&heap->unsorted_bin,(p_used_chunk)merged_chunk,true); // insert chunk to unsorted bin
+
+	}
 
 }
 

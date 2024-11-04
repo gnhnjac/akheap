@@ -27,7 +27,7 @@ int main() {
    while(iter < ITERATIONS)
    {
 
-      //printf("iteration %d, heap size: 0x%x\n",iter,h.size);
+      // printf("iteration %d, heap size: 0x%x\n",iter,h.size);
 
       // printf("at j %d\n",j);
 
@@ -53,14 +53,16 @@ int main() {
 
       iter++;
 
-      //print_bin(&h.unsorted_bin);
+      
    }
 
    clock_t end = clock();
 
    double time_spent = (double)(end - begin) / CLOCKS_PER_SEC;
 
-   printf("%fs for %u iterations, %d allocations and %d frees\n",time_spent,ITERATIONS,ITERATIONS*ALOCS_PER_ITER,frees);
+   print_bin(&h.unsorted_bin);
+   
+   printf("%fs for %u iterations, %d allocations and %d frees, heap size: 0x%x\n",time_spent,ITERATIONS,ITERATIONS*ALOCS_PER_ITER,frees,h.size);
 
    return 0;
 }

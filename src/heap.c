@@ -300,6 +300,8 @@ p_free_chunk merge_forwards(p_heap heap, p_free_chunk chunk)
 
 			remove_chunk_from_bin(next_chunk->bin_ptr,next_chunk);
 
+			next_chunk->chunk_size |= CHUNK_CONSOLIDATED_BIT;
+
 		}
 		else
 			return chunk;
@@ -347,20 +349,25 @@ void consolidate_bin(p_heap heap, p_free_chunk *bin, p_free_chunk *tgt_bin)
 	{
 		p_free_chunk next_tmp = tmp->fwd_ptr;
 
-		if (!(tmp->chunk_size&CHUNK_CONSOLIDATED_BIT))
+		if (!(tmp->chunk_size&CHUNK_CONSOLIDATED_BIT)) // check if it hasn't already consolidated with another chunk
 		{
 
 			p_free_chunk merged_chunk = merge_backwards(heap, tmp);
 
-			if (merged_chunk && !(merged_chunk->chunk_size&CHUNK_CONSOLIDATED_BIT)) // no need to add it if it's merged with heap top or already consolidated
+			if (merged_chunk) // if not merged with top then merge it forwards
+				merged_chunk = merge_forwards(heap,merged_chunk);
+
+			if (merged_chunk) // no need to add it if it's merged with heap top
 			{
 				insert_to_bin(tgt_bin,(p_used_chunk)merged_chunk,true);
+				merged_chunk->chunk_size |= CHUNK_CONSOLIDATED_BIT; // if the backwards merged chunk appears somewhere on this bin in the future
 			}
-			else if (merged_chunk && (merged_chunk->chunk_size&CHUNK_CONSOLIDATED_BIT))
-				free_chunk_from_next_metadata((p_used_chunk)merged_chunk); // size has changed, update it
-
-			if (merged_chunk)
-				merged_chunk->chunk_size |= CHUNK_CONSOLIDATED_BIT;
+			// no need for that since there's no case where 
+			// else if (merged_chunk && (merged_chunk->chunk_size&CHUNK_CONSOLIDATED_BIT))
+			// {
+			// 	printf("here somehow?");
+			// 	free_chunk_from_next_metadata((p_used_chunk)merged_chunk); // size has changed, update it
+			// }
 		}
 
 		tmp = next_tmp;

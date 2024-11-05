@@ -29,6 +29,8 @@ typedef struct {
 
 #define FAST_BIN_AMT 10
 #define FAST_BIN_CONSOLIDATION_THRESHOLD 0x10000 // 64kb threshold
+#define HEAP_TOP_TRIM_THRESHOLD 0x10000
+#define PAGE_SIZE 0x1000
 
 #define SMALL_BIN_AMT 62
 #define LARGE_BIN_AMT 63 // needs to be odd
@@ -54,7 +56,7 @@ typedef struct {
 #define CHUNK_HEADER_SIZE sizeof(size_t)
 #define CHUNK_METADATA_SIZE (CHUNK_HEADER_SIZE*2)
 #define CHUNK_ALIGN 0x10//8
-#define CHUNK_FLAG_MASK (CHUNK_ALIGN-1)
+#define CHUNK_FLAG_MASK 7//(CHUNK_ALIGN-1)
 #define MIN_SIZE (CHUNK_ALIGN*2)
 
 #define LARGE_BIN_MINIMUM (MIN_SIZE + SMALL_BIN_AMT*CHUNK_ALIGN)

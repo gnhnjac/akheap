@@ -5,7 +5,7 @@
 #include <time.h>
 #include "heap.h"
 
-char heap_buffer[0x1000000] __attribute__ ((aligned (0x1000))); // 10 MB heap, page aligned (this is constant size, now i use sbrk)
+//char heap_buffer[0x1000000] __attribute__ ((aligned (0x1000))); // 10 MB heap, page aligned (this is constant size, now i use sbrk)
 
 #define ITERATIONS 10000
 #define ALOCS_PER_ITER 100
@@ -33,7 +33,7 @@ int main() {
 
       for (int i = 0; i < ALOCS_PER_ITER; i++)
       {
-         size_t alloc_size = rand() % 1024;
+         size_t alloc_size = rand() % 4096;
 
          chunk_array[i] = heap_allocate(&h,alloc_size);
 
@@ -60,7 +60,7 @@ int main() {
 
    double time_spent = (double)(end - begin) / CLOCKS_PER_SEC;
 
-   print_bin(&h.unsorted_bin);
+   //print_bin(&h.unsorted_bin);
    
    printf("%fs for %u iterations, %d allocations and %d frees, heap size: 0x%x\n",time_spent,ITERATIONS,ITERATIONS*ALOCS_PER_ITER,frees,h.size);
 
